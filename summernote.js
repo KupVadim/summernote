@@ -3,8 +3,44 @@
  * (c) 2013~ Alan Hong
  * summernote may be freely distributed under the MIT license./
  */
-(function ($, CodeMirror) {
+(function (factory) {
+  /* global define */
+  if (typeof define === 'function' && define.amd) {
+    // AMD. Register as an anonymous module.
+    define(['jquery', 'codemirror'], factory);
+  } else {
+    // Browser globals: jQuery, CodeMirror
+    factory(window.jQuery, window.CodeMirror);
+  }
+}(function ($, CodeMirror) {
   'use strict';
+
+  // Array.prototype.reduce fallback
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/Reduce
+  if ('function' !== typeof Array.prototype.reduce) {
+    Array.prototype.reduce = function (callback, optInitialValue) {
+      var idx, value, length = this.length >>> 0, isValueSet = false;
+      if (1 < arguments.length) {
+        value = optInitialValue;
+        isValueSet = true;
+      }
+      for (idx = 0; length > idx; ++idx) {
+        if (this.hasOwnProperty(idx)) {
+          if (isValueSet) {
+            value = callback(value, this[idx], idx, this);
+          } else {
+            value = this[idx];
+            isValueSet = true;
+          }
+        }
+      }
+      if (!isValueSet) {
+        throw new TypeError('Reduce of empty array with no initial value');
+      }
+      return value;
+    };
+  }
+
   /**
    * object which check platform/agent
    */
@@ -322,7 +358,7 @@
      */
     var position = function (node) {
       var offset = 0;
-      while (node = node.previousSibling) { offset += 1; }
+      while ((node = node.previousSibling)) { offset += 1; }
       return offset;
     };
 
@@ -832,6 +868,58 @@
       });
     };
 
+    this.insertVideo = function ($editable, sUrl) {
+      // video url patterns(youtube, instagram, vimeo, dailymotion)
+      var ytRegExp = /(?:https?:\/\/)?(?:www\.)?youtu(?:be\.com\/watch\?(?:.*?&(?:amp;)?)?v=|\.be\/)([\w‌​\-]+)(?:&(?:amp;)?[\w\?=]*)?/;
+      var ytMatch = sUrl.match(ytRegExp);
+
+      var igRegExp = /\/\/instagram.com\/p\/(.[a-zA-Z0-9]*)/;
+      var igMatch = sUrl.match(igRegExp);
+
+      var vRegExp = /\/\/vine.co\/v\/(.[a-zA-Z0-9]*)/;
+      var vMatch = sUrl.match(vRegExp);
+
+      var vimRegExp = /\/\/(player.)?vimeo.com\/([a-z]*\/)*([0-9]{6,11})[?]?.*/;
+      var vimMatch = sUrl.match(vimRegExp);
+
+      var dmRegExp = /.+dailymotion.com\/(video|hub)\/([^_]+)[^#]*(#video=([^_&]+))?/;
+      var dmMatch = sUrl.match(dmRegExp);
+
+      var $video;
+      if (ytMatch && ytMatch[1].length === 11) {
+        var youtubeId =  ytMatch[1];
+        $video = $('<iframe>')
+          .attr('src', 'http://www.youtube.com/embed/' + youtubeId + '?origin=http://diply.com')
+          .attr('width', '640').attr('height', '360');
+      } else if (igMatch && igMatch[0].length > 0) {
+        $video = $('<iframe>')
+          .attr('src', igMatch[0] + '/embed/')
+          .attr('width', '612').attr('height', '710')
+          .attr('scrolling', 'no')
+          .attr('allowtransparency', 'true');
+      } else if (vMatch && vMatch[0].length > 0) {
+        $video = $('<iframe>')
+          .attr('src', vMatch[0] + '/embed/simple')
+          .attr('width', '600').attr('height', '600')
+          .attr('class', 'vine-embed');
+      } else if (vimMatch && vimMatch[3].length > 0) {
+        $video = $('<iframe webkitallowfullscreen mozallowfullscreen allowfullscreen>')
+          .attr('src', '//player.vimeo.com/video/' + vimMatch[3])
+          .attr('width', '640').attr('height', '360');
+      } else if (dmMatch && dmMatch[2].length > 0) {
+        $video = $('<iframe>')
+          .attr('src', 'http://www.dailymotion.com/embed/video/' + dmMatch[2])
+          .attr('width', '640').attr('height', '360');
+      } else {
+        // this is not a known video link. Now what, Cat? Now what?
+      }
+
+      if ($video) {
+        $video.attr('frameborder', 0);
+        range.create().insertNode($video[0]);
+      }
+    };
+
     this.formatBlock = function ($editable, sValue) {
       recordUndo($editable);
       sValue = agent.bMSIE ? '<' + sValue + '>' : sValue;
@@ -899,6 +987,25 @@
         } else {
           document.execCommand('createlink', false, sLinkUrlWithProtocol);
         }
+      });
+    };
+
+    this.setVideoDialog = function ($editable, fnShowDialog) {
+      var rng = range.create();
+      var editor = this;
+
+      if (rng.isOnAnchor()) {
+        var elAnchor = dom.ancestor(rng.sc, dom.isAnchor);
+        rng = range.create(elAnchor, 0, elAnchor, 1);
+      }
+
+      fnShowDialog({
+        range: rng,
+        text: rng.toString()
+      }, function (sLinkUrl) {
+        rng.select();
+        recordUndo($editable);
+        editor.insertVideo($editable, sLinkUrl);
       });
     };
 
@@ -1109,17 +1216,11 @@
   var Dialog = function () {
     this.showImageDialog = function ($dialog, hDropImage, fnInsertImages, fnInsertImage) {
       var $imageDialog = $dialog.find('.note-image-dialog');
-      var $dropzone = $dialog.find('.note-dropzone'),
-          $imageInput = $dialog.find('.note-image-input'),
+      var $imageInput = $dialog.find('.note-image-input'),
           $imageUrl = $dialog.find('.note-image-url'),
           $imageBtn = $dialog.find('.note-image-btn');
 
       $imageDialog.on('shown.bs.modal', function () {
-        $dropzone.on('dragenter dragover dragleave', false);
-        $dropzone.on('drop', function (e) {
-          hDropImage(e);
-          $imageDialog.modal('hide');
-        });
         $imageInput.on('change', function () {
           fnInsertImages(this.files);
           $(this).val('');
@@ -1138,13 +1239,40 @@
           event.preventDefault();
         });
       }).on('hidden.bs.modal', function () {
-        $dropzone.off('dragenter dragover dragleave drop');
         $imageInput.off('change');
         $imageDialog.off('shown.bs.modal hidden.bs.modal');
         $imageUrl.off('keyup');
         $imageBtn.off('click');
       }).modal('show');
     };
+
+    this.showVideoDialog = function ($dialog, videoInfo, callback) {
+      var $videoDialog = $dialog.find('.note-video-dialog');
+      var $videoUrl = $videoDialog.find('.note-video-url'),
+          $videoBtn = $videoDialog.find('.note-video-btn');
+
+      $videoDialog.on('show.bs.modal', function () {
+        $videoUrl.val(videoInfo.text).keyup(function () {
+          if ($videoUrl.val()) {
+            $videoBtn.removeClass('disabled').attr('disabled', false);
+          } else {
+            $videoBtn.addClass('disabled').attr('disabled', true);
+          }
+        }).trigger('keyup').trigger('focus');
+
+        $videoBtn.click(function (event) {
+          $videoDialog.modal('hide');
+          callback($videoUrl.val());
+          event.preventDefault();
+        });
+
+      }).on('hidden.bs.modal', function () {
+        $videoUrl.off('keyup');
+        $videoBtn.off('click');
+        $videoDialog.off('show.bs.modal hidden.bs.modal');
+      }).modal('show');
+    };
+
 
     this.showLinkDialog = function ($dialog, linkInfo, callback) {
       var $linkDialog = $dialog.find('.note-link-dialog');
@@ -1297,6 +1425,7 @@
       var dataTransfer = event.originalEvent.dataTransfer;
       if (dataTransfer && dataTransfer.files) {
         var oLayoutInfo = makeLayoutInfo(event.currentTarget || event.target);
+        oLayoutInfo.editable().focus();
         insertImages(oLayoutInfo.editable(), dataTransfer.files);
       }
       event.stopPropagation();
@@ -1403,6 +1532,11 @@
           }, function (sUrl) {
             editor.restoreRange($editable);
             editor.insertImage($editable, sUrl);
+          });
+        } else if (sEvent === 'showVideoDialog') {
+          $editable.focus();
+          editor.setVideoDialog($editable, function (linkInfo, cb) {
+            dialog.showVideoDialog($dialog, linkInfo, cb);
           });
         } else if (sEvent === 'showHelpDialog') {
           dialog.showHelpDialog($dialog);
@@ -1526,6 +1660,48 @@
     };
 
     /**
+     * attach Drag and Drop Events
+     * @param oLayoutInfo {object} - layout Informations
+     */
+    var attachDragAndDropEvent = function (oLayoutInfo) {
+      var collection = $(), $dropzone = oLayoutInfo.dropzone,
+          $dropzoneMessage = oLayoutInfo.dropzone.find('.note-dropzone-message');
+
+      // show dropzone(overlay) on dragenter when dragging a object to document.
+      $(document).on('dragenter', function (e) {
+        var bCodeview = oLayoutInfo.editor.hasClass('codeview');
+        if (!bCodeview && collection.length === 0) {
+          oLayoutInfo.editor.addClass('dragover');
+          $dropzone.width(oLayoutInfo.editor.width());
+          $dropzone.height(oLayoutInfo.editor.height());
+          $dropzoneMessage.text('Drag Image Here');
+        }
+        collection = collection.add(e.target);
+      }).on('dragleave', function (e) {
+        collection = collection.not(e.target);
+        if (collection.length === 0) {
+          oLayoutInfo.editor.removeClass('dragover');
+        }
+      });
+
+      // dropzone change message on hover.
+      $dropzone.on('dragenter', function () {
+        $dropzone.addClass('hover');
+        $dropzoneMessage.text('Drop Image');
+      }).on('dragleave', function () {
+        $dropzone.removeClass('hover');
+        $dropzoneMessage.text('Drag Image Here');
+      });
+
+      // attach drop event
+      $dropzone.on('drop', function (e) {
+        hDropImage(e);
+        collection = $();
+        oLayoutInfo.editor.removeClass('dragover');
+      }).on('dragover', false); // prevent default dragover event
+    };
+
+    /**
      * Attach eventhandler
      * @param {object} oLayoutInfo - layout Informations
      * @param {object} options - user options include custom event handlers
@@ -1536,17 +1712,14 @@
       oLayoutInfo.editable.on('mousedown', hMousedown);
       oLayoutInfo.editable.on('keyup mouseup', hToolbarAndPopoverUpdate);
       oLayoutInfo.editable.on('scroll', hScroll);
-      //TODO: handle Drag point
-      oLayoutInfo.editable.on('dragenter dragover dragleave', false);
-      oLayoutInfo.editable.on('drop', hDropImage);
+
+      attachDragAndDropEvent(oLayoutInfo);
 
       oLayoutInfo.handle.on('mousedown', hHandleMousedown);
-
       oLayoutInfo.toolbar.on('click', hToolbarAndPopoverClick);
       oLayoutInfo.popover.on('click', hToolbarAndPopoverClick);
       oLayoutInfo.toolbar.on('mousedown', hToolbarAndPopoverMousedown);
       oLayoutInfo.popover.on('mousedown', hToolbarAndPopoverMousedown);
-
       oLayoutInfo.statusbar.on('mousedown', hStatusbarMousedown);
 
       //toolbar table dimension
@@ -1611,14 +1784,14 @@
       image: {
         image: 'Picture',
         insert: 'Insert Image',
-        resize_full: 'Resize Full',
-        resize_half: 'Resize Half',
-        resize_quarter: 'Resize Quarter',
-        float_left: 'Float Left',
-        float_right: 'Float Right',
-        float_none: 'Float None',
-        drag_image_here: 'Drag an image here',
-        select_from_files: 'Select from files',
+        resizeFull: 'Resize Full',
+        resizeHalf: 'Resize Half',
+        resizeQuarter: 'Resize Quarter',
+        floatLeft: 'Float Left',
+        floatRight: 'Float Right',
+        floatNone: 'Float None',
+        dragImageHere: 'Drag an image here',
+        selectFromFiles: 'Select from files',
         url: 'Image URL'
       },
       link: {
@@ -1626,8 +1799,15 @@
         insert: 'Insert Link',
         unlink: 'Unlink',
         edit: 'Edit',
-        text_to_display: 'Text to display',
+        textToDisplay: 'Text to display',
         url: 'To what URL should this link go?'
+      },
+      video: {
+        video: 'Video',
+        videoLink: 'Video Link',
+        insert: 'Insert Video',
+        url: 'Video URL?',
+        providers: '(YouTube, Vimeo, Vine, Instagram, or DailyMotion)'
       },
       table: {
         table: 'Table'
@@ -1671,17 +1851,17 @@
         background: 'BackColor',
         foreground: 'FontColor',
         transparent: 'Transparent',
-        set_transparent: 'Set transparent',
+        setTransparent: 'Set transparent',
         reset: 'Reset',
-        reset_to_default: 'Reset to default'
+        resetToDefault: 'Reset to default'
       },
       shortcut: {
         shortcuts: 'Keyboard shortcuts',
         close: 'Close',
-        text_formatting: 'Text formatting',
+        textFormatting: 'Text formatting',
         action: 'Action',
-        paragraph_formatting: 'Paragraph formatting',
-        document_style: 'Document Style'
+        paragraphFormatting: 'Paragraph formatting',
+        documentStyle: 'Document Style'
       },
       history: {
         undo: 'Undo',
@@ -1702,14 +1882,14 @@
       image: {
         image: 'Afbeelding',
         insert: 'Afbeelding invoegen',
-        resize_full: 'Volledige breedte',
-        resize_half: 'Halve breedte',
-        resize_quarter: 'Kwart breedte',
-        float_left: 'Links uitlijnen',
-        float_right: 'Rechts uitlijnen',
-        float_none: 'Geen uitlijning',
-        drag_image_here: 'Sleep hier een afbeelding naar toe',
-        select_from_files: 'Selecteer een bestand',
+        resizeFull: 'Volledige breedte',
+        resizeHalf: 'Halve breedte',
+        resizeQuarter: 'Kwart breedte',
+        floatLeft: 'Links uitlijnen',
+        floatRight: 'Rechts uitlijnen',
+        floatNone: 'Geen uitlijning',
+        dragImageHere: 'Sleep hier een afbeelding naar toe',
+        selectFromFiles: 'Selecteer een bestand',
         url: 'URL van de afbeelding'
       },
       link: {
@@ -1717,8 +1897,15 @@
         insert: 'Link invoegen',
         unlink: 'Link verwijderen',
         edit: 'Wijzigen',
-        text_to_display: 'Tekst van link',
+        textToDisplay: 'Tekst van link',
         url: 'Naar welke URL moet deze link verwijzen?'
+      },
+      video: {
+        video: 'Video',
+        videoLink: 'Video Link',
+        insert: 'Insert Video',
+        url: 'Video URL?',
+        providers: '(YouTube, Vimeo, Vine, Instagram, or DailyMotion)'
       },
       table: {
         table: 'Tabel'
@@ -1762,21 +1949,217 @@
         background: 'Achtergrond kleur',
         foreground: 'Tekst kleur',
         transparent: 'Transparant',
-        set_transparent: 'Transparant',
+        setTransparent: 'Transparant',
         reset: 'Standaard',
-        reset_to_default: 'Standaard kleur'
+        resetToDefault: 'Standaard kleur'
       },
       shortcut: {
         shortcuts: 'Toetsencombinaties',
         close: 'sluiten',
-        text_formatting: 'Tekststijlen',
+        textFormatting: 'Tekststijlen',
         action: 'Acties',
-        paragraph_formatting: 'Paragraafstijlen',
-        document_style: 'Documentstijlen'
+        paragraphFormatting: 'Paragraafstijlen',
+        documentStyle: 'Documentstijlen'
       },
       history: {
         undo: 'Ongedaan maken',
         redo: 'Opnieuw doorvoeren'
+      }
+    },
+
+    'de-DE': {
+      font: {
+        bold: 'Fett',
+        italic: 'Kursiv',
+        underline: 'Unterstreichen',
+        strike: 'Durchgestrichen',
+        clear: 'Zurücksetzen',
+        height: 'Zeilenhöhe',
+        size: 'Schriftgröße'
+      },
+      image: {
+        image: 'Grafik',
+        insert: 'Grafik einfügen',
+        resizeFull: 'Originalgröße',
+        resizeHalf: 'Größe 1/2',
+        resizeQuarter: 'Größe 1/4',
+        floatLeft: 'Linksbündig',
+        floatRight: 'Rechtsbündig',
+        floatNone: 'Kein Textfluss',
+        dragImageHere: 'Ziehen Sie ein Bild mit der Maus hierher',
+        selectFromFiles: 'Wählen Sie eine Datei aus',
+        url: 'Grafik URL'
+      },
+      link: {
+        link: 'Link',
+        insert: 'Link einfügen',
+        unlink: 'Link entfernen',
+        edit: 'Editieren',
+        textToDisplay: 'Anzeigetext',
+        url: 'Ziel des Links?'
+      },
+      video: {
+        video: 'Video',
+        videoLink: 'Video Link',
+        insert: 'Insert Video',
+        url: 'Video URL?',
+        providers: '(YouTube, Vimeo, Vine, Instagram, or DailyMotion)'
+      },
+      table: {
+        table: 'Tabelle'
+      },
+      hr: {
+        insert: 'Eine horizontale Linie einfügen'
+      },
+      style: {
+        style: 'Stil',
+        normal: 'Normal',
+        blockquote: 'Zitat',
+        pre: 'Quellcode',
+        h1: 'Überschrift 1',
+        h2: 'Überschrift 2',
+        h3: 'Überschrift 3',
+        h4: 'Überschrift 4',
+        h5: 'Überschrift 5',
+        h6: 'Überschrift 6'
+      },
+      lists: {
+        unordered: 'Aufzählung',
+        ordered: 'Nummerieung'
+      },
+      options: {
+        help: 'Hilfe',
+        fullscreen: 'Vollbild',
+        codeview: 'HTML-Code anzeigen'
+      },
+      paragraph: {
+        paragraph: 'Absatz',
+        outdent: 'Einzug vergrößern',
+        indent: 'Einzug verkleinern',
+        left: 'Links ausrichten',
+        center: 'Zentriert ausrichten',
+        right: 'Rechts ausrichten',
+        justify: 'Blocksatz'
+      },
+      color: {
+        recent: 'Letzte Farbe',
+        more: 'Mehr Farben',
+        background: 'Hintergrundfarbe',
+        foreground: 'Schriftfarbe',
+        transparent: 'Transparenz',
+        setTransparent: 'Transparenz setzen',
+        reset: 'Zurücksetzen',
+        resetToDefault: 'Auf Standard zurücksetzen'
+      },
+      shortcut: {
+        shortcuts: 'Tastenkürzel',
+        close: 'Schließen',
+        textFormatting: 'Textformatierung',
+        action: 'Aktion',
+        paragraphFormatting: 'Absatzformatierung',
+        documentStyle: 'Dokumentenstil'
+      },
+      history: {
+        undo: 'Rückgängig',
+        redo: 'Wiederholen'
+      }
+    },
+
+    'ko-KR': {
+      font: {
+        bold: '굵게',
+        italic: '기울임꼴',
+        underline: '밑줄',
+        strike: '취소선',
+        clear: '글자 효과 없애기',
+        height: '줄간격',
+        size: '글자 크기'
+      },
+      image: {
+        image: '사진',
+        insert: '사진 추가',
+        resizeFull: '원본 크기로 변경',
+        resizeHalf: '50% 크기로 변경',
+        resizeQuarter: '25% 크기로 변경',
+        floatLeft: '왼쪽 정렬',
+        floatRight: '오른쪽 정렬',
+        floatNone: '정렬하지 않음',
+        dragImageHere: '사진을 이곳으로 끌어오세요',
+        selectFromFiles: '파일 선택',
+        url: '사진 URL'
+      },
+      link: {
+        link: '링크',
+        insert: '링크 추가',
+        unlink: '링크 삭제',
+        edit: '수정',
+        textToDisplay: '링크에 표시할 내용',
+        url: '이동할 URL'
+      },
+      video: {
+        video: '동영상',
+        videoLink: '동영상 링크',
+        insert: '동영상 추가',
+        url: '동영상 URL?',
+        providers: '(YouTube, Vimeo, Vine, Instagram, DailyMotion 사용 가능)'
+      },
+      table: {
+        table: '테이블'
+      },
+      hr: {
+        insert: '구분선 추가'
+      },
+      style: {
+        style: '스타일',
+        normal: '본문',
+        blockquote: '인용구',
+        pre: '코드',
+        h1: '제목 1',
+        h2: '제목 2',
+        h3: '제목 3',
+        h4: '제목 4',
+        h5: '제목 5',
+        h6: '제목 6'
+      },
+      lists: {
+        unordered: '글머리 기호',
+        ordered: '번호 매기기'
+      },
+      options: {
+        help: '도움말',
+        fullscreen: '전체 화면',
+        codeview: '코드 보기'
+      },
+      paragraph: {
+        paragraph: '문단 정렬',
+        outdent: '내어쓰기',
+        indent: '들여쓰기',
+        left: '왼쪽 정렬',
+        center: '가운데 정렬',
+        right: '오른쪽 정렬',
+        justify: '양쪽 정렬'
+      },
+      color: {
+        recent: '마지막으로 사용한 색',
+        more: '다른 색 선택',
+        background: '배경색',
+        foreground: '글자색',
+        transparent: '투명',
+        setTransparent: '투명',
+        reset: '취소',
+        resetToDefault: '기본 값으로 변경'
+      },
+      shortcut: {
+        shortcuts: '키보드 단축키',
+        close: '닫기',
+        textFormatting: '글자 스타일 적용',
+        action: '기능',
+        paragraphFormatting: '문단 스타일 적용',
+        documentStyle: '문서 스타일 적용'
+      },
+      history: {
+        undo: '실행 취소',
+        redo: '다시 실행'
       }
     }
   };
@@ -1787,13 +2170,18 @@
    * rendering toolbar and editable
    */
   var Renderer = function () {
+    var aToolbarItem, sPopover, sHandle, sDialog, sStatusbar;
+
     /* jshint ignore:start */
-    var aToolbarItem = {
+    aToolbarItem = {
       picture: function(locale) {
         return '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.image + '" data-event="showImageDialog" tabindex="-1"><i class="fa fa-picture-o icon-picture"></i></button>';
       },
       link: function(locale) {
         return '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.link.link + '" data-event="showLinkDialog" data-shortcut="Ctrl+K" data-mac-shortcut="⌘+K" tabindex="-1"><i class="fa fa-link icon-link"></i></button>';
+      },
+      video: function(locale){
+          return '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.video.video + '" data-event="showVideoDialog" tabindex="-1"><i class="fa fa-youtube-play icon-play"></i></button>';
       },
       table: function(locale) {
         return '<button type="button" class="btn btn-default btn-sm btn-small dropdown-toggle" title="' + locale.table.table + '" data-toggle="dropdown" tabindex="-1"><i class="fa fa-table icon-table"></i> <span class="caret"></span></button>' +
@@ -1843,12 +2231,12 @@
         '<li>' +
         '<div class="btn-group">' +
         '<div class="note-palette-title">' + locale.color.background + '</div>' +
-        '<div class="note-color-reset" data-event="backColor" data-value="inherit" title="' + locale.color.transparent + '">' + locale.color.set_transparent + '</div>' +
+        '<div class="note-color-reset" data-event="backColor" data-value="inherit" title="' + locale.color.transparent + '">' + locale.color.setTransparent + '</div>' +
         '<div class="note-color-palette" data-target-event="backColor"></div>' +
         '</div>' +
         '<div class="btn-group">' +
         '<div class="note-palette-title">' + locale.color.foreground + '</div>' +
-        '<div class="note-color-reset" data-event="foreColor" data-value="inherit" title="' + locale.color.reset + '">' + locale.color.reset_to_default + '</div>' +
+        '<div class="note-color-reset" data-event="foreColor" data-value="inherit" title="' + locale.color.reset + '">' + locale.color.resetToDefault + '</div>' +
         '<div class="note-color-palette" data-target-event="foreColor"></div>' +
         '</div>' +
         '</li>' +
@@ -1913,7 +2301,7 @@
         return '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.options.codeview + '" data-event="codeview" tabindex="-1"><i class="fa fa-code icon-code"></i></button>';
       }
     };
-    var sPopover = function(locale) {
+    sPopover = function(locale) {
       return '<div class="note-popover">' +
                 '<div class="note-link-popover popover bottom in" style="display: none;">' +
                   '<div class="arrow"></div>' +
@@ -1922,6 +2310,7 @@
                     '<div class="note-insert btn-group">' +
                     '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.link.edit + '" data-event="showLinkDialog" tabindex="-1"><i class="fa fa-edit icon-edit"></i></button>' +
                     '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.link.unlink + '" data-event="unlink" tabindex="-1"><i class="fa fa-unlink icon-unlink"></i></button>' +
+                    '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.video.videoLink +'" data-event="showVideoDialog" tabindex="-1"><i class="fa fa-youtube-play icon-play"></i></button>' +
                     '</div>' +
                   '</div>' +
                 '</div>' +
@@ -1929,67 +2318,67 @@
                   '<div class="arrow"></div>' +
                   '<div class="popover-content note-image-content">' +
                     '<div class="btn-group">' +
-                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.resize_full + '" data-event="resize" data-value="1" tabindex="-1"><span class="note-fontsize-10">100%</span> </button>' +
-                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.resize_half + '" data-event="resize" data-value="0.5" tabindex="-1"><span class="note-fontsize-10">50%</span> </button>' +
-                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.resize_quarter + '" data-event="resize" data-value="0.25" tabindex="-1"><span class="note-fontsize-10">25%</span> </button>' +
+                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.resizeFull + '" data-event="resize" data-value="1" tabindex="-1"><span class="note-fontsize-10">100%</span> </button>' +
+                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.resizeHalf + '" data-event="resize" data-value="0.5" tabindex="-1"><span class="note-fontsize-10">50%</span> </button>' +
+                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.resizeQuarter + '" data-event="resize" data-value="0.25" tabindex="-1"><span class="note-fontsize-10">25%</span> </button>' +
                     '</div>' +
                     '<div class="btn-group">' +
-                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.float_left + '" data-event="floatMe" data-value="left" tabindex="-1"><i class="fa fa-align-left icon-align-left"></i></button>' +
-                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.float_right + '" data-event="floatMe" data-value="right" tabindex="-1"><i class="fa fa-align-right icon-align-right"></i></button>' +
-                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.float_none + '" data-event="floatMe" data-value="none" tabindex="-1"><i class="fa fa-align-justify icon-align-justify"></i></button>' +
+                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.floatLeft + '" data-event="floatMe" data-value="left" tabindex="-1"><i class="fa fa-align-left icon-align-left"></i></button>' +
+                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.floatRight + '" data-event="floatMe" data-value="right" tabindex="-1"><i class="fa fa-align-right icon-align-right"></i></button>' +
+                      '<button type="button" class="btn btn-default btn-sm btn-small" title="' + locale.image.floatNone + '" data-event="floatMe" data-value="none" tabindex="-1"><i class="fa fa-align-justify icon-align-justify"></i></button>' +
                     '</div>' +
                   '</div>' +
                 '</div>' +
               '</div>';
     };
 
-    var sHandle = '<div class="note-handle">' +
-                    '<div class="note-control-selection">' +
-                      '<div class="note-control-selection-bg"></div>' +
-                      '<div class="note-control-holder note-control-nw"></div>' +
-                      '<div class="note-control-holder note-control-ne"></div>' +
-                      '<div class="note-control-holder note-control-sw"></div>' +
-                      '<div class="note-control-sizing note-control-se"></div>' +
-                      '<div class="note-control-selection-info"></div>' +
-                    '</div>' +
-                  '</div>';
+    sHandle = '<div class="note-handle">' +
+                '<div class="note-control-selection">' +
+                  '<div class="note-control-selection-bg"></div>' +
+                  '<div class="note-control-holder note-control-nw"></div>' +
+                  '<div class="note-control-holder note-control-ne"></div>' +
+                  '<div class="note-control-holder note-control-sw"></div>' +
+                  '<div class="note-control-sizing note-control-se"></div>' +
+                  '<div class="note-control-selection-info"></div>' +
+                '</div>' +
+              '</div>';
 
     var sShortcutText = function(locale) {
       return '<table class="note-shortcut">' +
-        '<thead>' +
-          '<tr><th></th><th>' + locale.shortcut.text_formatting + '</th></tr>' +
-        '</thead>' +
-        '<tbody>' +
-          '<tr><td>⌘ + B</td><td>' + locale.font.bold + '</td></tr>' +
-          '<tr><td>⌘ + I</td><td>' + locale.font.italic + '</td></tr>' +
-          '<tr><td>⌘ + U</td><td>' + locale.font.underline + '</td></tr>' +
-          '<tr><td>⌘ + ⇧ + S</td><td>' + locale.font.strike + '</td></tr>' +
-          '<tr><td>⌘ + \\</td><td>' + locale.font.clear + '</td></tr>' +
-          '</tr>' +
-        '</tbody>' +
-      '</table>';
+               '<thead>' +
+                 '<tr><th></th><th>' + locale.shortcut.textFormatting + '</th></tr>' +
+               '</thead>' +
+               '<tbody>' +
+                 '<tr><td>⌘ + B</td><td>' + locale.font.bold + '</td></tr>' +
+                 '<tr><td>⌘ + I</td><td>' + locale.font.italic + '</td></tr>' +
+                 '<tr><td>⌘ + U</td><td>' + locale.font.underline + '</td></tr>' +
+                 '<tr><td>⌘ + ⇧ + S</td><td>' + locale.font.strike + '</td></tr>' +
+                 '<tr><td>⌘ + \\</td><td>' + locale.font.clear + '</td></tr>' +
+                 '</tr>' +
+               '</tbody>' +
+             '</table>';
     };
 
     var sShortcutAction = function(locale) {
       return '<table class="note-shortcut">' +
-        '<thead>' +
-          '<tr><th></th><th>' + locale.shortcut.action + '</th></tr>' +
-        '</thead>' +
-        '<tbody>' +
-          '<tr><td>⌘ + Z</td><td>' + locale.history.undo + '</td></tr>' +
-          '<tr><td>⌘ + ⇧ + Z</td><td>' + locale.history.redo + '</td></tr>' +
-          '<tr><td>⌘ + ]</td><td>' + locale.paragraph.indent + '</td></tr>' +
-          '<tr><td>⌘ + [</td><td>' + locale.paragraph.outdent + '</td></tr>' +
-          '<tr><td>⌘ + K</td><td>' + locale.link.insert + '</td></tr>' +
-          '<tr><td>⌘ + ENTER</td><td>' + locale.hr.insert + '</td></tr>' +
-        '</tbody>' +
-      '</table>';
+               '<thead>' +
+                 '<tr><th></th><th>' + locale.shortcut.action + '</th></tr>' +
+               '</thead>' +
+               '<tbody>' +
+                 '<tr><td>⌘ + Z</td><td>' + locale.history.undo + '</td></tr>' +
+                 '<tr><td>⌘ + ⇧ + Z</td><td>' + locale.history.redo + '</td></tr>' +
+                 '<tr><td>⌘ + ]</td><td>' + locale.paragraph.indent + '</td></tr>' +
+                 '<tr><td>⌘ + [</td><td>' + locale.paragraph.outdent + '</td></tr>' +
+                 '<tr><td>⌘ + K</td><td>' + locale.link.insert + '</td></tr>' +
+                 '<tr><td>⌘ + ENTER</td><td>' + locale.hr.insert + '</td></tr>' +
+               '</tbody>' +
+             '</table>';
     };
 
     var sShortcutPara = function(locale) {
       return '<table class="note-shortcut">' +
                 '<thead>' +
-                  '<tr><th></th><th>' + locale.shortcut.paragraph_formatting + '</th></tr>' +
+                  '<tr><th></th><th>' + locale.shortcut.paragraphFormatting + '</th></tr>' +
                 '</thead>' +
                 '<tbody>' +
                   '<tr><td>⌘ + ⇧ + L</td><td>' + locale.paragraph.left + '</td></tr>' +
@@ -2004,28 +2393,28 @@
 
     var sShortcutStyle = function(locale) {
       return '<table class="note-shortcut">' +
-                '<thead>' +
-                  '<tr><th></th><th>' + locale.shortcut.document_style + '</th></tr>' +
-                '</thead>' +
-                '<tbody>' +
-                  '<tr><td>⌘ + NUM0</td><td>' + locale.style.normal + '</td></tr>' +
-                  '<tr><td>⌘ + NUM1</td><td>' + locale.style.h1 + '</td></tr>' +
-                  '<tr><td>⌘ + NUM2</td><td>' + locale.style.h2 + '</td></tr>' +
-                  '<tr><td>⌘ + NUM3</td><td>' + locale.style.h3 + '</td></tr>' +
-                  '<tr><td>⌘ + NUM4</td><td>' + locale.style.h4 + '</td></tr>' +
-                  '<tr><td>⌘ + NUM5</td><td>' + locale.style.h5 + '</td></tr>' +
-                  '<tr><td>⌘ + NUM6</td><td>' + locale.style.h6 + '</td></tr>' +
-                '</tbody>' +
-              '</table>';
+               '<thead>' +
+                 '<tr><th></th><th>' + locale.shortcut.documentStyle + '</th></tr>' +
+               '</thead>' +
+               '<tbody>' +
+                 '<tr><td>⌘ + NUM0</td><td>' + locale.style.normal + '</td></tr>' +
+                 '<tr><td>⌘ + NUM1</td><td>' + locale.style.h1 + '</td></tr>' +
+                 '<tr><td>⌘ + NUM2</td><td>' + locale.style.h2 + '</td></tr>' +
+                 '<tr><td>⌘ + NUM3</td><td>' + locale.style.h3 + '</td></tr>' +
+                 '<tr><td>⌘ + NUM4</td><td>' + locale.style.h4 + '</td></tr>' +
+                 '<tr><td>⌘ + NUM5</td><td>' + locale.style.h5 + '</td></tr>' +
+                 '<tr><td>⌘ + NUM6</td><td>' + locale.style.h6 + '</td></tr>' +
+               '</tbody>' +
+             '</table>';
     };
 
     var sShortcutTable = function(locale) {
       return '<table class="note-shortcut-layout">' +
-                '<tbody>' +
-                  '<tr><td>' + sShortcutAction(locale) + '</td><td>' + sShortcutText(locale) + '</td></tr>' +
-                  '<tr><td>' + sShortcutStyle(locale) + '</td><td>' + sShortcutPara(locale) + '</td></tr>' +
-                '</tbody>' +
-              '</table>';
+               '<tbody>' +
+                 '<tr><td>' + sShortcutAction(locale) + '</td><td>' + sShortcutText(locale) + '</td></tr>' +
+                 '<tr><td>' + sShortcutStyle(locale) + '</td><td>' + sShortcutPara(locale) + '</td></tr>' +
+               '</tbody>' +
+             '</table>';
     };
 
     var replaceMacKeys = function (sHtml) {
@@ -2034,71 +2423,92 @@
 
     var sDialog = function(locale) {
       return '<div class="note-dialog">' +
-                '<div class="note-image-dialog modal" aria-hidden="false">' +
-                  '<div class="modal-dialog">' +
-                    '<div class="modal-content">' +
-                      '<div class="modal-header">' +
-                        '<button type="button" class="close" aria-hidden="true" tabindex="-1">×</button>' +
-                        '<h4>' + locale.image.insert + '</h4>' +
-                      '</div>' +
-                      '<div class="modal-body">' +
-                        '<div class="row-fluid">' +
-                          '<div class="note-dropzone span12">' + locale.image.drag_image_here + '</div>' +
-                          '<h5>' + locale.image.select_from_files + '</h5>' +
-                          '<input class="note-image-input" type="file" name="files" accept="image/*" capture="camera" />' +
-                          '<h5>' + locale.image.url + '</h5>' +
-                          '<input class="note-image-url form-control span12" type="text" />' +
-                        '</div>' +
-                      '</div>' +
-                      '<div class="modal-footer">' +
-                        '<button href="#" class="btn btn-primary note-image-btn disabled" disabled="disabled">' + locale.image.insert + '</button>' +
-                      '</div>' +
-                    '</div>' +
-                  '</div>' +
-                '</div>' +
-                '<div class="note-link-dialog modal" aria-hidden="false">' +
-                  '<div class="modal-dialog">' +
-                    '<div class="modal-content">' +
-                      '<div class="modal-header">' +
-                        '<button type="button" class="close" aria-hidden="true" tabindex="-1">×</button>' +
-                        '<h4>' + locale.link.insert + '</h4>' +
-                      '</div>' +
-                      '<div class="modal-body">' +
-                        '<div class="row-fluid">' +
+               '<div class="note-image-dialog modal" aria-hidden="false">' +
+                 '<div class="modal-dialog">' +
+                   '<div class="modal-content">' +
+                     '<div class="modal-header">' +
+                       '<button type="button" class="close" aria-hidden="true" tabindex="-1">×</button>' +
+                       '<h4>' + locale.image.insert + '</h4>' +
+                     '</div>' +
+                     '<div class="modal-body">' +
+                       '<div class="row-fluid">' +
+                         '<h5>' + locale.image.selectFromFiles + '</h5>' +
+                         '<input class="note-image-input" type="file" name="files" accept="image/*" />' +
+                         '<h5>' + locale.image.url + '</h5>' +
+                         '<input class="note-image-url form-control span12" type="text" />' +
+                       '</div>' +
+                     '</div>' +
+                     '<div class="modal-footer">' +
+                       '<button href="#" class="btn btn-primary note-image-btn disabled" disabled="disabled">' + locale.image.insert + '</button>' +
+                     '</div>' +
+                   '</div>' +
+                 '</div>' +
+               '</div>' +
+               '<div class="note-link-dialog modal" aria-hidden="false">' +
+                 '<div class="modal-dialog">' +
+                   '<div class="modal-content">' +
+                     '<div class="modal-header">' +
+                       '<button type="button" class="close" aria-hidden="true" tabindex="-1">×</button>' +
+                       '<h4>' + locale.link.insert + '</h4>' +
+                     '</div>' +
+                     '<div class="modal-body">' +
+                       '<div class="row-fluid">' +
 
-                        '<div class="form-group">' +
-                          '<label>' + locale.link.text_to_display + '</label>' +
-                          '<span class="note-link-text form-control input-xlarge uneditable-input" />' +
-                        '</div>' +
-                        '<div class="form-group">' +
-                          '<label>' + locale.link.url + '</label>' +
-                          '<input class="note-link-url form-control span12" type="text" />' +
-                        '</div>' +
-                        '</div>' +
-                      '</div>' +
-                      '<div class="modal-footer">' +
-                        '<button href="#" class="btn btn-primary note-link-btn disabled" disabled="disabled">' + locale.link.insert + '</button>' +
-                      '</div>' +
-                    '</div>' +
-                  '</div>' +
-                '</div>' +
-                '<div class="note-help-dialog modal" aria-hidden="false">' +
-                  '<div class="modal-dialog">' +
-                    '<div class="modal-content">' +
-                      '<div class="modal-body">' +
-                        '<div class="modal-background">' +
-                        '<a class="modal-close pull-right" aria-hidden="true" tabindex="-1">' + locale.shortcut.close + '</a>' +
-                        '<div class="title">' + locale.shortcut.shortcuts + '</div>' +
-                        (agent.bMac ? sShortcutTable(locale) : replaceMacKeys(sShortcutTable(locale))) +
-                        '<p class="text-center"><a href="//hackerwins.github.io/summernote/" target="_blank">Summernote v0.4</a> · <a href="//github.com/HackerWins/summernote" target="_blank">Project</a> · <a href="//github.com/HackerWins/summernote/issues" target="_blank">Issues</a></p>' +
-                      '</div>' +
-                    '</div>' +
-                  '</div>' +
-                '</div>' +
-              '</div>';
+                       '<div class="form-group">' +
+                         '<label>' + locale.link.textToDisplay + '</label>' +
+                         '<span class="note-link-text form-control input-xlarge uneditable-input" />' +
+                       '</div>' +
+                       '<div class="form-group">' +
+                         '<label>' + locale.link.url + '</label>' +
+                         '<input class="note-link-url form-control span12" type="text" />' +
+                       '</div>' +
+                       '</div>' +
+                     '</div>' +
+                     '<div class="modal-footer">' +
+                       '<button href="#" class="btn btn-primary note-link-btn disabled" disabled="disabled">' + locale.link.insert + '</button>' +
+                     '</div>' +
+                   '</div>' +
+                 '</div>' +
+               '</div>' +
+                   '<div class="note-video-dialog modal" aria-hidden="false">' +
+                     '<div class="modal-dialog">' +
+                       '<div class="modal-content">' +
+                         '<div class="modal-header">' +
+                           '<button type="button" class="close" aria-hidden="true" tabindex="-1">×</button>' +
+                           '<h4>' + locale.video.insert +'</h4>' +
+                         '</div>' +
+                         '<div class="modal-body">' +
+                           '<div class="row-fluid">' +
+
+                           '<div class="form-group">' +
+                             '<label>' + locale.video.url + '</label>&nbsp;<small class="text-muted">' + locale.video.providers + '</small>' +
+                             '<input class="note-video-url form-control span12" type="text" />' +
+                           '</div>' +
+                           '</div>' +
+                         '</div>' +
+                         '<div class="modal-footer">' +
+                           '<button href="#" class="btn btn-primary note-video-btn disabled" disabled="disabled">' + locale.video.insert + '</button>' +
+                         '</div>' +
+                       '</div>' +
+                     '</div>' +
+                   '</div>' +
+               '<div class="note-help-dialog modal" aria-hidden="false">' +
+                 '<div class="modal-dialog">' +
+                   '<div class="modal-content">' +
+                     '<div class="modal-body">' +
+                       '<div class="modal-background">' +
+                       '<a class="modal-close pull-right" aria-hidden="true" tabindex="-1">' + locale.shortcut.close + '</a>' +
+                       '<div class="title">' + locale.shortcut.shortcuts + '</div>' +
+                       (agent.bMac ? sShortcutTable(locale) : replaceMacKeys(sShortcutTable(locale))) +
+                       '<p class="text-center"><a href="//hackerwins.github.io/summernote/" target="_blank">Summernote v0.4</a> · <a href="//github.com/HackerWins/summernote" target="_blank">Project</a> · <a href="//github.com/HackerWins/summernote/issues" target="_blank">Issues</a></p>' +
+                     '</div>' +
+                   '</div>' +
+                 '</div>' +
+               '</div>' +
+             '</div>';
     };
 
-    var sStatusbar = '<div class="note-resizebar"><div class="note-icon-bar"></div><div class="note-icon-bar"></div><div class="note-icon-bar"></div></div>';
+    sStatusbar = '<div class="note-resizebar"><div class="note-icon-bar"></div><div class="note-icon-bar"></div><div class="note-icon-bar"></div></div>';
     /* jshint ignore:end */
 
     // createTooltip
@@ -2107,7 +2517,7 @@
         var $btn = $(elBtn);
         var sShortcut = $btn.attr(agent.bMac ? 'data-mac-shortcut': 'data-shortcut');
         if (sShortcut) { $btn.attr('title', function (i, v) { return v + ' (' + sShortcut + ')'; }); }
-      //bootstrap tooltip on btn-group bug: https://github.com/twitter/bootstrap/issues/5687
+      // bootstrap tooltip on btn-group bug: https://github.com/twitter/bootstrap/issues/5687
       }).tooltip({container: 'body', placement: sPlacement || 'top'});
     };
 
@@ -2216,7 +2626,10 @@
         $(this).closest('.modal').modal('hide');
       });
 
-      //08. Editor/Holder switch
+      //08. create Dropzone
+      $('<div class="note-dropzone"><div class="note-dropzone-message"></div></div>').prependTo($editor);
+
+      //09. Editor/Holder switch
       $editor.insertAfter($holder);
       $holder.hide();
     };
@@ -2228,6 +2641,7 @@
 
       return {
         editor: $editor,
+        dropzone: $editor.find('.note-dropzone'),
         toolbar: $editor.find('.note-toolbar'),
         editable: $editor.find('.note-editable'),
         codable: $editor.find('.note-codable'),
@@ -2267,7 +2681,7 @@
           ['para', ['ul', 'ol', 'paragraph']],
           ['height', ['height']],
           ['table', ['table']],
-          ['insert', ['link', 'picture']],
+          ['insert', ['link', 'picture', 'video']],
           ['view', ['fullscreen', 'codeview']],
           ['help', ['help']]
         ],
@@ -2301,7 +2715,7 @@
     },
     // get the HTML contents of note or set the HTML contents of note.
     code: function (sHTML) {
-      //get the HTML contents
+      // get the HTML contents
       if (sHTML === undefined) {
         var $holder = this.first();
         if ($holder.length === 0) { return; }
@@ -2338,31 +2752,4 @@
       return { dom: dom, list: list, func: func, range: range };
     }
   });
-})(window.jQuery, window.CodeMirror); // jQuery, CodeMirror
-
-// Array.prototype.reduce fallback
-// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/Reduce
-if ('function' !== typeof Array.prototype.reduce) {
-  Array.prototype.reduce = function (callback, optInitialValue) {
-    'use strict';
-    var idx, value, length = this.length >>> 0, isValueSet = false;
-    if (1 < arguments.length) {
-      value = optInitialValue;
-      isValueSet = true;
-    }
-    for (idx = 0; length > idx; ++idx) {
-      if (this.hasOwnProperty(idx)) {
-        if (isValueSet) {
-          value = callback(value, this[idx], idx, this);
-        } else {
-          value = this[idx];
-          isValueSet = true;
-        }
-      }
-    }
-    if (!isValueSet) {
-      throw new TypeError('Reduce of empty array with no initial value');
-    }
-    return value;
-  };
-}
+}));
